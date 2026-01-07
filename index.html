@@ -1894,9 +1894,18 @@
 
         // Limpiar donaciones locales
         function clearLocalDonations() {
-            if (confirm('⚠️ This will delete all local donations from your device. Are you sure?\n\nThis is useful if you already uploaded them to the cloud.')) {
+            const localDonations = JSON.parse(localStorage.getItem('allDonations')) || [];
+            
+            if (localDonations.length === 0) {
+                showMessage('No local donations to clear');
+                const alertDiv = document.getElementById('migrationAlert');
+                if (alertDiv) alertDiv.remove();
+                return;
+            }
+            
+            if (confirm(`⚠️ This will delete ${localDonations.length} local donation${localDonations.length > 1 ? 's' : ''} from your device.\n\nMake sure you uploaded them to Firebase first!\n\nAre you sure?`)) {
                 localStorage.removeItem('allDonations');
-                showMessage('🗑️ Local donations cleared');
+                showMessage(`🗑️ Cleared ${localDonations.length} local donation${localDonations.length > 1 ? 's' : ''}`);
                 
                 const alertDiv = document.getElementById('migrationAlert');
                 if (alertDiv) alertDiv.remove();
@@ -1983,76 +1992,75 @@
 
         // Cargar datos
         function loadData() {
-            // ========== CARGAR DESDE FIREBASE ==========
-            donationsRef.orderBy('timestamp', 'desc').limit(500).get()
+            // ========== CARGAR SOLO DESDE FIREBASE ==========
+            donationsRef.orderBy('timestamp', 'desc').limit(1000).get()
                 .then((snapshot) => {
-                    const firebaseDonations = [];
+                    const allDonations = [];
                     snapshot.forEach(doc => {
                         const data = doc.data();
-                        firebaseDonations.push({
+                        allDonations.push({
                             id: doc.id,
                             ...data,
                             date: data.date || (data.timestamp ? new Date(data.timestamp.toDate()).toISOString() : new Date().toISOString())
                         });
                     });
                     
-                    console.log('📊 Loaded from Firebase:', firebaseDonations.length, 'donations');
+                    console.log('📊 Loaded from Firebase:', allDonations.length, 'donations');
                     
-                    // Combinar con localStorage
-                    const localDonations = JSON.parse(localStorage.getItem('allDonations')) || [];
-                    const allDonations = [...firebaseDonations, ...localDonations];
-                    
-                    // Eliminar duplicados
-                    const uniqueDonations = Array.from(new Map(
-                        allDonations.map(d => [d.date + (d.email || '') + (d.name || ''), d])
-                    ).values());
-                    
-                    const totalAmount = uniqueDonations.length;
-                    
-                    document.getElementById('counter').textContent = totalAmount + ' €';
-                    document.getElementById('donorCount').textContent = totalAmount + ' donations made';
-                    
-                    // Calcular donaciones de hoy
-                    const todayDonations = uniqueDonations.filter(d => isToday(new Date(d.date)));
-                    document.getElementById('todayCount').textContent = todayDonations.length;
-                    document.getElementById('todayDonations').textContent = todayDonations.length;
-                    
-                    // Calcular donaciones de esta semana
-                    const weekDonations = uniqueDonations.filter(d => isThisWeek(new Date(d.date)));
-                    document.getElementById('thisWeek').textContent = weekDonations.length;
-                    
-                    // Calcular promedio por hora
-                    const hoursActive = Math.max(1, Math.floor((Date.now() - (uniqueDonations[0]?.date ? new Date(uniqueDonations[0].date).getTime() : Date.now())) / (1000 * 60 * 60)));
-                    document.getElementById('avgPerHour').textContent = Math.round(totalAmount / hoursActive);
-                    
-                    // Actualizar estadísticas de progreso
-                    updateProgressStats(totalAmount);
-                    
-                    // Actualizar ranking con datos de Firebase
-                    updateRankingWithData(uniqueDonations);
-                })
-                .catch((error) => {
-                    console.error('❌ Error loading from Firebase:', error);
-                    // Fallback a localStorage
-                    const allDonations = JSON.parse(localStorage.getItem('allDonations')) || [];
                     const totalAmount = allDonations.length;
                     
                     document.getElementById('counter').textContent = totalAmount + ' €';
                     document.getElementById('donorCount').textContent = totalAmount + ' donations made';
                     
+                    // Calcular donaciones de hoy
                     const todayDonations = allDonations.filter(d => isToday(new Date(d.date)));
                     document.getElementById('todayCount').textContent = todayDonations.length;
                     document.getElementById('todayDonations').textContent = todayDonations.length;
                     
+                    // Calcular donaciones de esta semana
                     const weekDonations = allDonations.filter(d => isThisWeek(new Date(d.date)));
                     document.getElementById('thisWeek').textContent = weekDonations.length;
                     
-                    const hoursActive = Math.max(1, Math.floor((Date.now() - (allDonations[0]?.date ? new Date(allDonations[0].date).getTime() : Date.now())) / (1000 * 60 * 60)));
-                    document.getElementById('avgPerHour').textContent = Math.round(totalAmount / hoursActive);
+                    // Calcular promedio por hora
+                    if (allDonations.length > 0) {
+                        const oldestDonation = allDonations.reduce((oldest, d) => {
+                            const dDate = new Date(d.date);
+                            return dDate < new Date(oldest.date) ? d : oldest;
+                        });
+                        const hoursActive = Math.max(1, Math.floor((Date.now() - new Date(oldestDonation.date).getTime()) / (1000 * 60 * 60)));
+                        document.getElementById('avgPerHour').textContent = Math.round(totalAmount / hoursActive);
+                    }
                     
+                    // Calcular días activos
+                    if (allDonations.length > 0) {
+                        const oldestDonation = allDonations.reduce((oldest, d) => {
+                            const dDate = new Date(d.date);
+                            return dDate < new Date(oldest.date) ? d : oldest;
+                        });
+                        const daysActive = Math.max(1, Math.ceil((Date.now() - new Date(oldestDonation.date).getTime()) / (1000 * 60 * 60 * 24)));
+                        document.getElementById('daysActive').textContent = daysActive;
+                    }
+                    
+                    // Actualizar estadísticas de progreso
                     updateProgressStats(totalAmount);
+                    
+                    // Actualizar ranking con datos de Firebase
+                    updateRankingWithData(allDonations);
+                })
+                .catch((error) => {
+                    console.error('❌ Error loading from Firebase:', error);
+                    showMessage('⚠️ Error loading donations. Please refresh the page.');
+                    
+                    // Mostrar UI vacía en caso de error
+                    document.getElementById('counter').textContent = '0 €';
+                    document.getElementById('donorCount').textContent = '0 donations made';
+                    document.getElementById('todayCount').textContent = '0';
+                    document.getElementById('todayDonations').textContent = '0';
+                    document.getElementById('thisWeek').textContent = '0';
+                    document.getElementById('avgPerHour').textContent = '0';
+                    updateProgressStats(0);
                 });
-            // ===========================================
+            // ================================================
         }
 
         // Verificar si es hoy
@@ -2240,7 +2248,7 @@
 
         // Mostrar ranking completo
         function showFullRanking() {
-            // Obtener datos desde Firebase
+            // Obtener datos SOLO desde Firebase
             donationsRef.get().then((snapshot) => {
                 const allDonations = [];
                 snapshot.forEach(doc => {
@@ -2251,11 +2259,7 @@
                     });
                 });
                 
-                // Combinar con localStorage
-                const localDonations = JSON.parse(localStorage.getItem('allDonations')) || [];
-                const combinedDonations = [...allDonations, ...localDonations];
-                
-                const ranking = getRankingDataFromDonations(combinedDonations);
+                const ranking = getRankingDataFromDonations(allDonations);
                 const userEmail = userData.email;
                 const userKey = userData.email || userData.name;
                 
@@ -2292,16 +2296,11 @@
                 document.getElementById('fullRankingModal').classList.add('show');
             }).catch((error) => {
                 console.error('Error loading ranking:', error);
-                // Fallback a localStorage
-                const ranking = getRankingData();
                 const content = document.getElementById('fullRankingContent');
                 content.innerHTML = `
                     <p style="text-align: center; color: #f59e0b; padding: 20px;">
-                        Unable to load full ranking from cloud. Showing local data only.
+                        Unable to load ranking. Please refresh the page.
                     </p>
-                    <div style="max-height: 60vh; overflow-y: auto;">
-                        ${ranking.map((donor, index) => renderRankingItem(donor, index, false)).join('')}
-                    </div>
                 `;
                 document.getElementById('fullRankingModal').classList.add('show');
             });
@@ -2342,27 +2341,9 @@
             // Verificar logros desbloqueados
             const newAchievements = checkAchievements();
             
-            // Guardar donación
-            const allDonations = JSON.parse(localStorage.getItem('allDonations')) || [];
-            allDonations.push({
-                name,
-                email,
-                avatar: {...selectedAvatar},
-                date: new Date().toISOString(),
-                showInRanking,
-                achievements: [...userData.unlockedAchievements],
-                currency: {
-                    code: selectedCurrency.code,
-                    symbol: selectedCurrency.symbol,
-                    amount: selectedCurrency.amount,
-                    name: selectedCurrency.name
-                }
-            });
+            // ========== GUARDAR SOLO EN FIREBASE (NO localStorage) ==========
+            localStorage.setItem('userData', JSON.stringify(userData)); // Solo guardar userData
             
-            localStorage.setItem('allDonations', JSON.stringify(allDonations));
-            localStorage.setItem('userData', JSON.stringify(userData));
-            
-            // ========== GUARDAR EN FIREBASE ==========
             const donationData = {
                 name,
                 email,
@@ -2403,9 +2384,9 @@
                 })
                 .catch((error) => {
                     console.error('❌ Error saving to Firebase:', error);
-                    showMessage('⚠️ Donation saved locally, but cloud sync failed. Your donation still counts!');
+                    showMessage('⚠️ Error saving donation. Please try again.');
                 });
-            // =========================================
+            // ================================================================
             
             // Cerrar modal
             closeModal('donateModal');
