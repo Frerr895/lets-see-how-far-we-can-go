@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Let's See How Far We Can Go - World Record</title>
+    
+    <!-- Firebase SDK (Compat version for HTML) -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    
     <style>
         * {
             margin: 0;
@@ -1267,6 +1272,27 @@
     </div>
 
     <script>
+        // ==================== FIREBASE CONFIGURATION ====================
+        const firebaseConfig = {
+            apiKey: "AIzaSyBIPYXBWUkA3CWWYaYOf05Om1d1S7SE4Iw",
+            authDomain: "let-s-see-how-far.firebaseapp.com",
+            projectId: "let-s-see-how-far",
+            storageBucket: "let-s-see-how-far.firebasestorage.app",
+            messagingSenderId: "517080353418",
+            appId: "1:517080353418:web:a5528e2a74561220a87b73"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+        
+        // Firestore collections
+        const donationsRef = db.collection('donations');
+        const usersRef = db.collection('users');
+        
+        console.log('🔥 Firebase initialized successfully!');
+        // ================================================================
+
         const GOAL = 1000000;
         
         // Sistema de monedas (equivalentes a 1€)
@@ -1616,6 +1642,22 @@
             loadData();
             updateUI();
             attachEventListeners();
+            
+            // ========== ESCUCHAR CAMBIOS EN TIEMPO REAL ==========
+            donationsRef.orderBy('timestamp', 'desc').limit(1).onSnapshot((snapshot) => {
+                snapshot.docChanges().forEach((change) => {
+                    if (change.type === 'added') {
+                        console.log('🔥 New donation detected! Reloading data...');
+                        // Recargar datos cuando hay una nueva donación
+                        setTimeout(() => {
+                            loadData();
+                        }, 500);
+                    }
+                });
+            }, (error) => {
+                console.error('Error listening to Firebase changes:', error);
+            });
+            // ====================================================
         }
 
         // Renderizar selector de moneda
@@ -1773,27 +1815,76 @@
 
         // Cargar datos
         function loadData() {
-            const allDonations = JSON.parse(localStorage.getItem('allDonations')) || [];
-            const totalAmount = allDonations.length;
-            
-            document.getElementById('counter').textContent = totalAmount + ' €';
-            document.getElementById('donorCount').textContent = totalAmount + ' donaciones realizadas';
-            
-            // Calcular donaciones de hoy
-            const todayDonations = allDonations.filter(d => isToday(new Date(d.date)));
-            document.getElementById('todayCount').textContent = todayDonations.length;
-            document.getElementById('todayDonations').textContent = todayDonations.length;
-            
-            // Calcular donaciones de esta semana
-            const weekDonations = allDonations.filter(d => isThisWeek(new Date(d.date)));
-            document.getElementById('thisWeek').textContent = weekDonations.length;
-            
-            // Calcular promedio por hora (simulado)
-            const hoursActive = Math.max(1, Math.floor((Date.now() - (allDonations[0]?.date ? new Date(allDonations[0].date).getTime() : Date.now())) / (1000 * 60 * 60)));
-            document.getElementById('avgPerHour').textContent = Math.round(totalAmount / hoursActive);
-            
-            // Actualizar estadísticas de progreso
-            updateProgressStats(totalAmount);
+            // ========== CARGAR DESDE FIREBASE ==========
+            donationsRef.orderBy('timestamp', 'desc').limit(500).get()
+                .then((snapshot) => {
+                    const firebaseDonations = [];
+                    snapshot.forEach(doc => {
+                        const data = doc.data();
+                        firebaseDonations.push({
+                            id: doc.id,
+                            ...data,
+                            date: data.date || (data.timestamp ? new Date(data.timestamp.toDate()).toISOString() : new Date().toISOString())
+                        });
+                    });
+                    
+                    console.log('📊 Loaded from Firebase:', firebaseDonations.length, 'donations');
+                    
+                    // Combinar con localStorage
+                    const localDonations = JSON.parse(localStorage.getItem('allDonations')) || [];
+                    const allDonations = [...firebaseDonations, ...localDonations];
+                    
+                    // Eliminar duplicados
+                    const uniqueDonations = Array.from(new Map(
+                        allDonations.map(d => [d.date + (d.email || '') + (d.name || ''), d])
+                    ).values());
+                    
+                    const totalAmount = uniqueDonations.length;
+                    
+                    document.getElementById('counter').textContent = totalAmount + ' €';
+                    document.getElementById('donorCount').textContent = totalAmount + ' donations made';
+                    
+                    // Calcular donaciones de hoy
+                    const todayDonations = uniqueDonations.filter(d => isToday(new Date(d.date)));
+                    document.getElementById('todayCount').textContent = todayDonations.length;
+                    document.getElementById('todayDonations').textContent = todayDonations.length;
+                    
+                    // Calcular donaciones de esta semana
+                    const weekDonations = uniqueDonations.filter(d => isThisWeek(new Date(d.date)));
+                    document.getElementById('thisWeek').textContent = weekDonations.length;
+                    
+                    // Calcular promedio por hora
+                    const hoursActive = Math.max(1, Math.floor((Date.now() - (uniqueDonations[0]?.date ? new Date(uniqueDonations[0].date).getTime() : Date.now())) / (1000 * 60 * 60)));
+                    document.getElementById('avgPerHour').textContent = Math.round(totalAmount / hoursActive);
+                    
+                    // Actualizar estadísticas de progreso
+                    updateProgressStats(totalAmount);
+                    
+                    // Actualizar ranking con datos de Firebase
+                    updateRankingWithData(uniqueDonations);
+                })
+                .catch((error) => {
+                    console.error('❌ Error loading from Firebase:', error);
+                    // Fallback a localStorage
+                    const allDonations = JSON.parse(localStorage.getItem('allDonations')) || [];
+                    const totalAmount = allDonations.length;
+                    
+                    document.getElementById('counter').textContent = totalAmount + ' €';
+                    document.getElementById('donorCount').textContent = totalAmount + ' donations made';
+                    
+                    const todayDonations = allDonations.filter(d => isToday(new Date(d.date)));
+                    document.getElementById('todayCount').textContent = todayDonations.length;
+                    document.getElementById('todayDonations').textContent = todayDonations.length;
+                    
+                    const weekDonations = allDonations.filter(d => isThisWeek(new Date(d.date)));
+                    document.getElementById('thisWeek').textContent = weekDonations.length;
+                    
+                    const hoursActive = Math.max(1, Math.floor((Date.now() - (allDonations[0]?.date ? new Date(allDonations[0].date).getTime() : Date.now())) / (1000 * 60 * 60)));
+                    document.getElementById('avgPerHour').textContent = Math.round(totalAmount / hoursActive);
+                    
+                    updateProgressStats(totalAmount);
+                });
+            // ===========================================
         }
 
         // Verificar si es hoy
@@ -1857,7 +1948,7 @@
             const rankingList = document.getElementById('rankingListTop5');
             
             if (allDonations.length === 0) {
-                rankingList.innerHTML = '<p style="text-align: center; color: #64748b;">No hay donaciones aún. ¡Sé el primero!</p>';
+                rankingList.innerHTML = '<p style="text-align: center; color: #64748b;">No donations yet. Be the first!</p>';
                 return;
             }
             
@@ -1866,6 +1957,53 @@
             rankingList.innerHTML = ranking.slice(0, 5).map((donor, index) => {
                 return renderRankingItem(donor, index, false);
             }).join('');
+        }
+
+        // Actualizar ranking con datos proporcionados
+        function updateRankingWithData(allDonations) {
+            const rankingList = document.getElementById('rankingListTop5');
+            
+            if (allDonations.length === 0) {
+                rankingList.innerHTML = '<p style="text-align: center; color: #64748b;">No donations yet. Be the first!</p>';
+                return;
+            }
+            
+            const ranking = getRankingDataFromDonations(allDonations);
+            
+            rankingList.innerHTML = ranking.slice(0, 5).map((donor, index) => {
+                return renderRankingItem(donor, index, false);
+            }).join('');
+        }
+
+        // Obtener ranking desde array de donaciones
+        function getRankingDataFromDonations(allDonations) {
+            // Agrupar donaciones por email/nombre
+            const donorMap = new Map();
+            allDonations.forEach(donation => {
+                const key = donation.email || donation.name || 'Anonymous-' + Math.random();
+                if (!donorMap.has(key)) {
+                    donorMap.set(key, {
+                        name: donation.name || 'Anonymous Donor',
+                        email: donation.email,
+                        avatar: donation.avatar,
+                        donations: 0,
+                        totalAmount: 0,
+                        achievements: donation.achievements || []
+                    });
+                }
+                const donor = donorMap.get(key);
+                donor.donations++;
+                donor.totalAmount++;
+                // Actualizar achievements si son más recientes
+                if (donation.achievements && donation.achievements.length > donor.achievements.length) {
+                    donor.achievements = donation.achievements;
+                }
+            });
+            
+            // Convertir a array y ordenar
+            return Array.from(donorMap.values())
+                .filter(donor => donor.donations > 0)
+                .sort((a, b) => b.totalAmount - a.totalAmount);
         }
 
         // Obtener datos del ranking
@@ -1934,41 +2072,71 @@
 
         // Mostrar ranking completo
         function showFullRanking() {
-            const ranking = getRankingData();
-            const userEmail = userData.email;
-            const userKey = userData.email || userData.name;
-            
-            let userPosition = -1;
-            if (userKey) {
-                userPosition = ranking.findIndex(d => 
-                    (d.email && d.email === userEmail) || (d.name === userData.name && !userEmail)
-                );
-            }
-            
-            const content = document.getElementById('fullRankingContent');
-            
-            if (ranking.length === 0) {
-                content.innerHTML = '<p style="text-align: center; color: #64748b; padding: 40px;">No donations yet.</p>';
-            } else {
-                content.innerHTML = `
-                    ${userPosition >= 0 ? `
-                        <div style="background: #dbeafe; padding: 20px; border-radius: 15px; margin-bottom: 20px; text-align: center;">
-                            <h3 style="color: #1e40af; margin-bottom: 10px;">Your Position</h3>
-                            <div style="font-size: 2em; font-weight: bold; color: #1e3a8a;">#${userPosition + 1}</div>
-                            <div style="color: #1e40af; margin-top: 5px;">of ${ranking.length} participants</div>
+            // Obtener datos desde Firebase
+            donationsRef.get().then((snapshot) => {
+                const allDonations = [];
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    allDonations.push({
+                        ...data,
+                        date: data.date || (data.timestamp ? new Date(data.timestamp.toDate()).toISOString() : new Date().toISOString())
+                    });
+                });
+                
+                // Combinar con localStorage
+                const localDonations = JSON.parse(localStorage.getItem('allDonations')) || [];
+                const combinedDonations = [...allDonations, ...localDonations];
+                
+                const ranking = getRankingDataFromDonations(combinedDonations);
+                const userEmail = userData.email;
+                const userKey = userData.email || userData.name;
+                
+                let userPosition = -1;
+                if (userKey) {
+                    userPosition = ranking.findIndex(d => 
+                        (d.email && d.email === userEmail) || (d.name === userData.name && !userEmail)
+                    );
+                }
+                
+                const content = document.getElementById('fullRankingContent');
+                
+                if (ranking.length === 0) {
+                    content.innerHTML = '<p style="text-align: center; color: #64748b; padding: 40px;">No donations yet.</p>';
+                } else {
+                    content.innerHTML = `
+                        ${userPosition >= 0 ? `
+                            <div style="background: #dbeafe; padding: 20px; border-radius: 15px; margin-bottom: 20px; text-align: center;">
+                                <h3 style="color: #1e40af; margin-bottom: 10px;">Your Position</h3>
+                                <div style="font-size: 2em; font-weight: bold; color: #1e3a8a;">#${userPosition + 1}</div>
+                                <div style="color: #1e40af; margin-top: 5px;">of ${ranking.length} participants</div>
+                            </div>
+                        ` : ''}
+                        
+                        <div style="max-height: 60vh; overflow-y: auto;">
+                            ${ranking.map((donor, index) => {
+                                const isUser = userPosition === index;
+                                return renderRankingItem(donor, index, isUser);
+                            }).join('')}
                         </div>
-                    ` : ''}
-                    
+                    `;
+                }
+                
+                document.getElementById('fullRankingModal').classList.add('show');
+            }).catch((error) => {
+                console.error('Error loading ranking:', error);
+                // Fallback a localStorage
+                const ranking = getRankingData();
+                const content = document.getElementById('fullRankingContent');
+                content.innerHTML = `
+                    <p style="text-align: center; color: #f59e0b; padding: 20px;">
+                        Unable to load full ranking from cloud. Showing local data only.
+                    </p>
                     <div style="max-height: 60vh; overflow-y: auto;">
-                        ${ranking.map((donor, index) => {
-                            const isUser = userPosition === index;
-                            return renderRankingItem(donor, index, isUser);
-                        }).join('')}
+                        ${ranking.map((donor, index) => renderRankingItem(donor, index, false)).join('')}
                     </div>
                 `;
-            }
-            
-            document.getElementById('fullRankingModal').classList.add('show');
+                document.getElementById('fullRankingModal').classList.add('show');
+            });
         }
 
         // Procesar donación
@@ -2025,6 +2193,51 @@
             
             localStorage.setItem('allDonations', JSON.stringify(allDonations));
             localStorage.setItem('userData', JSON.stringify(userData));
+            
+            // ========== GUARDAR EN FIREBASE ==========
+            const donationData = {
+                name,
+                email,
+                avatar: {...selectedAvatar},
+                date: new Date().toISOString(),
+                showInRanking,
+                achievements: [...userData.unlockedAchievements],
+                currency: {
+                    code: selectedCurrency.code,
+                    symbol: selectedCurrency.symbol,
+                    amount: selectedCurrency.amount,
+                    name: selectedCurrency.name
+                },
+                timestamp: firebase.firestore.FieldValue.serverTimestamp()
+            };
+            
+            donationsRef.add(donationData)
+                .then((docRef) => {
+                    console.log('✅ Donation saved to Firebase with ID:', docRef.id);
+                    
+                    // Actualizar usuario en Firebase si tiene email
+                    if (email) {
+                        return usersRef.doc(email).set({
+                            name: userData.name,
+                            email: userData.email,
+                            avatar: userData.avatar,
+                            donations: userData.donations,
+                            totalDonated: userData.totalDonated,
+                            shares: userData.shares,
+                            unlockedAchievements: userData.unlockedAchievements,
+                            showInRanking: userData.showInRanking,
+                            lastDonation: new Date().toISOString()
+                        }, { merge: true });
+                    }
+                })
+                .then(() => {
+                    console.log('✅ User data updated in Firebase');
+                })
+                .catch((error) => {
+                    console.error('❌ Error saving to Firebase:', error);
+                    showMessage('⚠️ Donation saved locally, but cloud sync failed. Your donation still counts!');
+                });
+            // =========================================
             
             // Cerrar modal
             closeModal('donateModal');
