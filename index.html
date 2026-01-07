@@ -247,6 +247,73 @@
             position: relative;
             max-height: calc(100vh - 100px);
             overflow-y: auto;
+            /* Hacer el scroll más evidente */
+            box-shadow: 
+                0 20px 60px rgba(0, 0, 0, 0.3),
+                inset 0 -30px 30px -30px rgba(0, 0, 0, 0.1); /* Sombra interna abajo */
+        }
+        
+        /* Indicador de scroll en móvil */
+        .modal-content::after {
+            content: '⬇ Scroll down ⬇';
+            position: sticky;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(to top, rgba(255, 255, 255, 0.95), transparent);
+            text-align: center;
+            padding: 15px 0 10px;
+            font-weight: 600;
+            color: #1e40af;
+            font-size: 0.9em;
+            pointer-events: none;
+            opacity: 0;
+            animation: fadeInOut 2s ease-in-out infinite;
+        }
+        
+        @keyframes fadeInOut {
+            0%, 100% { opacity: 0; }
+            50% { opacity: 1; }
+        }
+        
+        /* Ocultar indicador cuando se ha scrolleado */
+        .modal-content.scrolled::after {
+            display: none;
+        }
+        
+        /* Botón flotante para indicar scroll */
+        .scroll-indicator-btn {
+            position: sticky;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 50px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 8px 20px rgba(30, 64, 175, 0.4);
+            z-index: 1000;
+            display: none;
+            animation: bounce 2s ease-in-out infinite;
+            margin-top: 20px;
+        }
+        
+        .scroll-indicator-btn.visible {
+            display: inline-block;
+        }
+        
+        @keyframes bounce {
+            0%, 100% { transform: translateX(-50%) translateY(0); }
+            50% { transform: translateX(-50%) translateY(-10px); }
+        }
+        
+        .scroll-indicator-btn:hover {
+            background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+            box-shadow: 0 10px 25px rgba(30, 64, 175, 0.5);
         }
 
         .modal-content.wide {
@@ -1154,6 +1221,11 @@
                 </div>
                 <div class="currency-grid" id="currencyGrid"></div>
             </div>
+            
+            <!-- Botón indicador de scroll -->
+            <button class="scroll-indicator-btn" id="scrollIndicatorBtn" type="button">
+                ⬇ Scroll down to continue ⬇
+            </button>
             
             <div id="donationForm">
                 <div class="form-group">
@@ -2164,7 +2236,8 @@
                         avatar: donation.avatar,
                         donations: 0,
                         totalAmount: 0,
-                        achievements: donation.achievements || []
+                        achievements: donation.achievements || [],
+                        showInRanking: donation.showInRanking !== false // Por defecto true si no está definido
                     });
                 }
                 const donor = donorMap.get(key);
@@ -2174,11 +2247,15 @@
                 if (donation.achievements && donation.achievements.length > donor.achievements.length) {
                     donor.achievements = donation.achievements;
                 }
+                // Actualizar showInRanking (usar el más reciente)
+                if (donation.showInRanking !== undefined) {
+                    donor.showInRanking = donation.showInRanking;
+                }
             });
             
-            // Convertir a array y ordenar
+            // Convertir a array, FILTRAR por showInRanking y ordenar
             return Array.from(donorMap.values())
-                .filter(donor => donor.donations > 0)
+                .filter(donor => donor.donations > 0 && donor.showInRanking !== false)
                 .sort((a, b) => b.totalAmount - a.totalAmount);
         }
 
@@ -2494,6 +2571,68 @@
             }
             
             modal.classList.add('show');
+            
+            // Mejorar UX del scroll
+            setTimeout(() => {
+                const modalContent = modal.querySelector('.modal-content');
+                const scrollIndicator = document.getElementById('scrollIndicatorBtn');
+                
+                if (modalContent) {
+                    // Resetear scroll al abrir
+                    modalContent.scrollTop = 0;
+                    modalContent.classList.remove('scrolled');
+                    
+                    // Verificar si hay scroll disponible
+                    const checkScroll = () => {
+                        const hasScroll = modalContent.scrollHeight > modalContent.clientHeight + 50;
+                        
+                        if (hasScroll && scrollIndicator) {
+                            scrollIndicator.classList.add('visible');
+                            
+                            // Click en el botón indicador hace scroll suave
+                            scrollIndicator.onclick = () => {
+                                const donationForm = document.getElementById('donationForm');
+                                if (donationForm) {
+                                    donationForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                }
+                            };
+                        } else if (scrollIndicator) {
+                            scrollIndicator.classList.remove('visible');
+                        }
+                    };
+                    
+                    checkScroll();
+                    
+                    // Listener de scroll para ocultar indicador
+                    const handleScroll = () => {
+                        const scrollPosition = modalContent.scrollTop;
+                        const scrollHeight = modalContent.scrollHeight - modalContent.clientHeight;
+                        
+                        // Si ha scrolleado más del 15%, ocultar todo
+                        if (scrollPosition > Math.max(100, scrollHeight * 0.15)) {
+                            modalContent.classList.add('scrolled');
+                            if (scrollIndicator) {
+                                scrollIndicator.classList.remove('visible');
+                            }
+                        } else {
+                            modalContent.classList.remove('scrolled');
+                            checkScroll();
+                        }
+                    };
+                    
+                    modalContent.addEventListener('scroll', handleScroll);
+                    
+                    // Pequeño bounce visual al abrir para indicar scroll
+                    if (modalContent.scrollHeight > modalContent.clientHeight + 50) {
+                        setTimeout(() => {
+                            modalContent.scrollTo({ top: 80, behavior: 'smooth' });
+                            setTimeout(() => {
+                                modalContent.scrollTo({ top: 0, behavior: 'smooth' });
+                            }, 800);
+                        }, 500);
+                    }
+                }
+            }, 100);
         }
 
         // Abrir modal de edición de perfil
