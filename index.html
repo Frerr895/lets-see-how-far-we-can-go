@@ -1738,6 +1738,174 @@
                     console.log('✅ Datos migrados exitosamente');
                 }
             }
+            
+            // Verificar si hay donaciones locales que no están en Firebase
+            checkForUnsyncedDonations();
+        }
+
+        // Verificar donaciones no sincronizadas
+        async function checkForUnsyncedDonations() {
+            const localDonations = JSON.parse(localStorage.getItem('allDonations')) || [];
+            
+            if (localDonations.length === 0) return;
+            
+            try {
+                const snapshot = await donationsRef.get();
+                const firebaseDonationsCount = snapshot.size;
+                
+                if (localDonations.length > firebaseDonationsCount) {
+                    console.log('⚠️ Found', localDonations.length - firebaseDonationsCount, 'unsynced donations');
+                    showMigrationButton(localDonations.length - firebaseDonationsCount);
+                }
+            } catch (error) {
+                console.error('Error checking unsynced donations:', error);
+            }
+        }
+
+        // Mostrar botón de migración
+        function showMigrationButton(unsyncedCount) {
+            const container = document.querySelector('.container');
+            const existingButton = document.getElementById('migrationAlert');
+            
+            if (existingButton) return; // Ya existe
+            
+            const alertDiv = document.createElement('div');
+            alertDiv.id = 'migrationAlert';
+            alertDiv.style.cssText = `
+                background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+                border: 2px solid #f59e0b;
+                border-radius: 15px;
+                padding: 20px;
+                margin-bottom: 20px;
+                text-align: center;
+            `;
+            
+            alertDiv.innerHTML = `
+                <div style="font-size: 1.2em; font-weight: bold; color: #92400e; margin-bottom: 10px;">
+                    ⚠️ You have ${unsyncedCount} donation${unsyncedCount > 1 ? 's' : ''} not synced to the cloud
+                </div>
+                <div style="color: #78350f; margin-bottom: 15px;">
+                    These donations are only on your device. Upload them to Firebase so everyone can see them!
+                </div>
+                <button id="btnMigrateToFirebase" style="
+                    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+                    color: white;
+                    border: none;
+                    padding: 12px 30px;
+                    border-radius: 10px;
+                    font-size: 1em;
+                    font-weight: 600;
+                    cursor: pointer;
+                    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+                    transition: transform 0.2s;
+                ">
+                    🚀 Upload ${unsyncedCount} Donation${unsyncedCount > 1 ? 's' : ''} to Cloud
+                </button>
+                <button id="btnClearLocal" style="
+                    background: #6b7280;
+                    color: white;
+                    border: none;
+                    padding: 10px 20px;
+                    border-radius: 10px;
+                    font-size: 0.9em;
+                    cursor: pointer;
+                    margin-left: 10px;
+                ">
+                    Clear Local Data
+                </button>
+            `;
+            
+            container.insertBefore(alertDiv, container.firstChild);
+            
+            // Event listeners
+            document.getElementById('btnMigrateToFirebase').addEventListener('click', migrateLocalDonationsToFirebase);
+            document.getElementById('btnClearLocal').addEventListener('click', clearLocalDonations);
+        }
+
+        // Migrar donaciones locales a Firebase
+        async function migrateLocalDonationsToFirebase() {
+            const btn = document.getElementById('btnMigrateToFirebase');
+            btn.disabled = true;
+            btn.textContent = '⏳ Uploading...';
+            
+            const localDonations = JSON.parse(localStorage.getItem('allDonations')) || [];
+            
+            if (localDonations.length === 0) {
+                showMessage('No local donations to upload');
+                return;
+            }
+            
+            let uploadedCount = 0;
+            let errorCount = 0;
+            
+            // Subir donaciones una por una
+            for (const donation of localDonations) {
+                try {
+                    // Verificar si ya existe (por fecha y email/nombre)
+                    const existingQuery = await donationsRef
+                        .where('date', '==', donation.date)
+                        .where('email', '==', donation.email || '')
+                        .get();
+                    
+                    if (existingQuery.empty) {
+                        // No existe, subirla
+                        await donationsRef.add({
+                            ...donation,
+                            timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                            migratedFrom: 'localStorage'
+                        });
+                        uploadedCount++;
+                        console.log('✅ Uploaded donation:', donation.name, donation.date);
+                    } else {
+                        console.log('⏭️ Skipping duplicate:', donation.name, donation.date);
+                    }
+                } catch (error) {
+                    console.error('❌ Error uploading donation:', error);
+                    errorCount++;
+                }
+            }
+            
+            // Mostrar resultado
+            const alertDiv = document.getElementById('migrationAlert');
+            if (uploadedCount > 0) {
+                showMessage(`✅ Successfully uploaded ${uploadedCount} donation${uploadedCount > 1 ? 's' : ''} to the cloud!`);
+                
+                // Opcional: limpiar localStorage después de migrar
+                if (confirm('Donations uploaded successfully! Clear local storage to avoid duplicates?')) {
+                    localStorage.removeItem('allDonations');
+                }
+                
+                // Remover alerta
+                if (alertDiv) alertDiv.remove();
+                
+                // Recargar datos
+                setTimeout(() => {
+                    loadData();
+                }, 1000);
+            } else {
+                showMessage('All donations were already in the cloud!');
+                if (alertDiv) alertDiv.remove();
+            }
+            
+            if (errorCount > 0) {
+                showMessage(`⚠️ ${errorCount} donation${errorCount > 1 ? 's' : ''} failed to upload`);
+            }
+        }
+
+        // Limpiar donaciones locales
+        function clearLocalDonations() {
+            if (confirm('⚠️ This will delete all local donations from your device. Are you sure?\n\nThis is useful if you already uploaded them to the cloud.')) {
+                localStorage.removeItem('allDonations');
+                showMessage('🗑️ Local donations cleared');
+                
+                const alertDiv = document.getElementById('migrationAlert');
+                if (alertDiv) alertDiv.remove();
+                
+                // Recargar datos
+                setTimeout(() => {
+                    loadData();
+                }, 500);
+            }
         }
 
         // Generar avatar SVG
