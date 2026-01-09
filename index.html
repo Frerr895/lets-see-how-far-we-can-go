@@ -2777,7 +2777,7 @@
             showMessage('✅ Profile updated successfully');
             updateUI();
         }
-        function openProfileModal() {
+        async function openProfileModal() {
             const profileContent = document.getElementById('profileContent');
             
             if (userData.donations === 0) {
@@ -2788,25 +2788,44 @@
                     </p>
                 `;
             } else {
-                const ranking = getRankingData();
-                const userKey = userData.email || userData.name;
-                const userPosition = ranking.findIndex(d => 
-                    (d.email && d.email === userData.email) || (d.name === userData.name && !userData.email)
-                );
-                
-                // Obtener logros más recientes de cada categoría
-                const donationAchievements = achievements.filter(a => a.type === 'donations' && userData.unlockedAchievements.includes(a.id));
-                const shareAchievements = achievements.filter(a => a.type === 'shares' && userData.unlockedAchievements.includes(a.id));
-                
-                const latestDonationAchievement = donationAchievements.length > 0 ? donationAchievements[donationAchievements.length - 1] : null;
-                const latestShareAchievement = shareAchievements.length > 0 ? shareAchievements[shareAchievements.length - 1] : null;
-                
-                const avatarSVG = generateAvatarSVG(userData.avatar);
+                // Mostrar loading mientras carga
                 profileContent.innerHTML = `
-                    <div class="user-profile">
-                        <div class="user-avatar-large">${avatarSVG}</div>
-                        <div class="user-name">${userData.name || 'Anonymous Donor'}</div>
-                        ${userData.email ? `<div class="user-email">${userData.email}</div>` : ''}
+                    <p style="text-align: center; color: #64748b; padding: 40px 20px;">
+                        Loading profile...
+                    </p>
+                `;
+                
+                try {
+                    // Cargar donaciones desde Firebase
+                    const snapshot = await donationsRef.get();
+                    const allDonations = [];
+                    snapshot.forEach(doc => {
+                        const data = doc.data();
+                        allDonations.push({
+                            ...data,
+                            date: data.date || (data.timestamp ? new Date(data.timestamp.toDate()).toISOString() : new Date().toISOString())
+                        });
+                    });
+                    
+                    const ranking = getRankingDataFromDonations(allDonations);
+                    const userKey = userData.email || userData.name;
+                    const userPosition = ranking.findIndex(d => 
+                        (d.email && d.email === userData.email) || (d.name === userData.name && !userData.email)
+                    );
+                    
+                    // Obtener logros más recientes de cada categoría
+                    const donationAchievements = achievements.filter(a => a.type === 'donations' && userData.unlockedAchievements.includes(a.id));
+                    const shareAchievements = achievements.filter(a => a.type === 'shares' && userData.unlockedAchievements.includes(a.id));
+                    
+                    const latestDonationAchievement = donationAchievements.length > 0 ? donationAchievements[donationAchievements.length - 1] : null;
+                    const latestShareAchievement = shareAchievements.length > 0 ? shareAchievements[shareAchievements.length - 1] : null;
+                    
+                    const avatarSVG = generateAvatarSVG(userData.avatar);
+                    profileContent.innerHTML = `
+                        <div class="user-profile">
+                            <div class="user-avatar-large">${avatarSVG}</div>
+                            <div class="user-name">${userData.name || 'Anonymous Donor'}</div>
+                            ${userData.email ? `<div class="user-email">${userData.email}${userData.emailVerified ? ' <span style="color: #10b981;">✓</span>' : ''}</div>` : ''}
                         
                         ${userPosition >= 0 ? `
                             <div class="user-ranking-position">
@@ -2889,24 +2908,33 @@
                     </div>
                 `;
                 
-                // Añadir event listener al botón de editar perfil
-                setTimeout(() => {
-                    const editBtn = document.getElementById('btnEditProfileFromProfile');
-                    if (editBtn) {
-                        editBtn.addEventListener('click', () => {
-                            closeModal('profileModal');
-                            openEditProfileModal();
-                        });
-                    }
+                    // Añadir event listener al botón de editar perfil
+                    setTimeout(() => {
+                        const editBtn = document.getElementById('btnEditProfileFromProfile');
+                        if (editBtn) {
+                            editBtn.addEventListener('click', () => {
+                                closeModal('profileModal');
+                                openEditProfileModal();
+                            });
+                        }
+                        
+                        // Añadir event listener al botón de sincronizar
+                        const syncBtn = document.getElementById('btnSyncData');
+                        if (syncBtn) {
+                            syncBtn.addEventListener('click', () => {
+                                syncUserData();
+                            });
+                        }
+                    }, 0);
                     
-                    // Añadir event listener al botón de sincronizar
-                    const syncBtn = document.getElementById('btnSyncData');
-                    if (syncBtn) {
-                        syncBtn.addEventListener('click', () => {
-                            syncUserData();
-                        });
-                    }
-                }, 0);
+                } catch (error) {
+                    console.error('❌ Error loading profile:', error);
+                    profileContent.innerHTML = `
+                        <p style="text-align: center; color: #ef4444; padding: 40px 20px;">
+                            Error loading profile. Please refresh the page.
+                        </p>
+                    `;
+                }
             }
             
             document.getElementById('profileModal').classList.add('show');
