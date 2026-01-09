@@ -2509,16 +2509,23 @@
         async function sendVerificationEmail(email, displayName) {
             if (!email || verificationEmailSent) return;
             
+            // Verificar que Firebase Auth esté habilitado
+            if (!auth) {
+                console.log('⚠️ Firebase Auth not configured');
+                return;
+            }
+            
             try {
                 const actionCodeSettings = {
                     url: window.location.href,
                     handleCodeInApp: false
                 };
                 
-                // Intentar crear usuario con contraseña temporal
-                const tempPassword = 'TempPass!' + Math.random().toString(36).slice(2) + Date.now();
+                // Generar contraseña temporal fuerte
+                const tempPassword = 'TempPass!' + Math.random().toString(36).slice(2) + Date.now() + '!';
                 
                 try {
+                    // Intentar crear usuario
                     const userCredential = await auth.createUserWithEmailAndPassword(email, tempPassword);
                     console.log('✅ User account created');
                     
@@ -2531,7 +2538,7 @@
                     await userCredential.user.sendEmailVerification(actionCodeSettings);
                     verificationEmailSent = true;
                     
-                    // IMPORTANTE: Cerrar sesión inmediatamente para que no se marque como verificado
+                    // IMPORTANTE: Cerrar sesión inmediatamente
                     await auth.signOut();
                     
                     showMessage(`📧 Verification email sent to ${email}. Check your inbox!`);
@@ -2539,49 +2546,26 @@
                     
                 } catch (error) {
                     if (error.code === 'auth/email-already-in-use') {
-                        // Usuario ya existe, intentar enviar link de sign-in
-                        console.log('📧 User exists, sending sign-in link');
-                        await auth.sendSignInLinkToEmail(email, actionCodeSettings);
-                        window.localStorage.setItem('emailForSignIn', email);
+                        // Usuario ya existe - simplemente informar
+                        console.log('ℹ️ User already has an account');
+                        showMessage(`ℹ️ Account already exists. If you haven't verified, check your email for the verification link.`);
                         verificationEmailSent = true;
-                        showMessage(`📧 Verification link sent to ${email}!`);
                     } else {
                         throw error;
                     }
                 }
                 
             } catch (error) {
-                console.error('❌ Error sending verification email:', error);
-                showMessage('⚠️ Could not send verification email. You can still donate!');
-            }
-        }
-        
-        // Verificar si el usuario viene de un link de verificación
-        if (auth.isSignInWithEmailLink(window.location.href)) {
-            let email = window.localStorage.getItem('emailForSignIn');
-            if (!email) {
-                email = window.prompt('Please provide your email for confirmation');
-            }
-            
-            if (email) {
-                auth.signInWithEmailLink(email, window.location.href)
-                    .then((result) => {
-                        window.localStorage.removeItem('emailForSignIn');
-                        showMessage('✅ Email verified successfully!');
-                        
-                        // Actualizar userData
-                        if (userData.email === email) {
-                            userData.emailVerified = true;
-                            localStorage.setItem('userData', JSON.stringify(userData));
-                        }
-                        
-                        // Limpiar URL
-                        window.history.replaceState({}, document.title, window.location.pathname);
-                    })
-                    .catch((error) => {
-                        console.error('Error verifying email:', error);
-                        showMessage('⚠️ Error verifying email. Please try again.');
-                    });
+                console.error('❌ Error with verification:', error);
+                
+                // No mostrar error al usuario si Firebase Auth no está configurado
+                if (error.code === 'auth/api-key-not-valid' || 
+                    error.code === 'auth/invalid-api-key' ||
+                    error.code === 'auth/project-not-found') {
+                    console.log('⚠️ Firebase Authentication not configured. Skipping email verification.');
+                } else {
+                    showMessage('⚠️ Could not send verification email. You can still donate!');
+                }
             }
         }
 
