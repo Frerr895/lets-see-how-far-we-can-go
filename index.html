@@ -1813,8 +1813,13 @@
         function migrateOldData() {
             const allDonations = JSON.parse(localStorage.getItem('allDonations')) || [];
             
+            // Si no hay donaciones locales, salir temprano
+            if (allDonations.length === 0) {
+                return;
+            }
+            
             // Si hay donaciones y userData existe, sincronizar logros
-            if (allDonations.length > 0 && userData.email) {
+            if (userData.email) {
                 let needsUpdate = false;
                 
                 allDonations.forEach(donation => {
@@ -2222,25 +2227,7 @@
 
         // Actualizar UI
         function updateUI() {
-            loadData();
-            updateRanking();
-        }
-
-        // Actualizar ranking (top 5)
-        function updateRanking() {
-            const allDonations = JSON.parse(localStorage.getItem('allDonations')) || [];
-            const rankingList = document.getElementById('rankingListTop5');
-            
-            if (allDonations.length === 0) {
-                rankingList.innerHTML = '<p style="text-align: center; color: #64748b;">No donations yet. Be the first!</p>';
-                return;
-            }
-            
-            const ranking = getRankingData();
-            
-            rankingList.innerHTML = ranking.slice(0, 5).map((donor, index) => {
-                return renderRankingItem(donor, index, false);
-            }).join('');
+            loadData(); // loadData ya actualiza el ranking, no hace falta más
         }
 
         // Actualizar ranking con datos proporcionados
@@ -2261,75 +2248,6 @@
 
         // Obtener ranking desde array de donaciones
         function getRankingDataFromDonations(allDonations) {
-            // Agrupar donaciones por email/nombre
-            const donorMap = new Map();
-            allDonations.forEach(donation => {
-                const key = donation.email || donation.name || 'Anonymous-' + Math.random();
-                if (!donorMap.has(key)) {
-                    donorMap.set(key, {
-                        name: donation.name || 'Anonymous Donor',
-                        email: donation.email,
-                        emailVerified: donation.emailVerified || false,
-                        avatar: donation.avatar,
-                        donations: 0,
-                        totalAmount: 0,
-                        achievements: donation.achievements || [],
-                        showInRanking: donation.showInRanking !== false // Por defecto true si no está definido
-                    });
-                }
-                const donor = donorMap.get(key);
-                donor.donations++;
-                donor.totalAmount++;
-                // Actualizar achievements si son más recientes
-                if (donation.achievements && donation.achievements.length > donor.achievements.length) {
-                    donor.achievements = donation.achievements;
-                }
-                // Actualizar showInRanking (usar el más reciente)
-                if (donation.showInRanking !== undefined) {
-                    donor.showInRanking = donation.showInRanking;
-                }
-                // Actualizar emailVerified si está verificado
-                if (donation.emailVerified) {
-                    donor.emailVerified = true;
-                }
-            });
-            
-            // Convertir a array, FILTRAR por showInRanking y ordenar
-            return Array.from(donorMap.values())
-                .filter(donor => donor.donations > 0 && donor.showInRanking !== false)
-                .sort((a, b) => b.totalAmount - a.totalAmount);
-        }
-
-        // Obtener datos del ranking
-        function getRankingData() {
-            const allDonations = JSON.parse(localStorage.getItem('allDonations')) || [];
-            
-            // Agrupar donaciones por email/nombre
-            const donorMap = new Map();
-            allDonations.forEach(donation => {
-                const key = donation.email || donation.name || 'Anónimo-' + Math.random();
-                if (!donorMap.has(key)) {
-                    donorMap.set(key, {
-                        name: donation.name || 'Donante Anónimo',
-                        email: donation.email,
-                        avatar: donation.avatar,
-                        donations: 0,
-                        totalAmount: 0,
-                        achievements: donation.achievements || []
-                    });
-                }
-                const donor = donorMap.get(key);
-                donor.donations++;
-                donor.totalAmount++;
-            });
-            
-            // Convertir a array y ordenar
-            return Array.from(donorMap.values())
-                .sort((a, b) => b.totalAmount - a.totalAmount);
-        }
-
-        // Renderizar item del ranking
-        function renderRankingItem(donor, index, isUserHighlight) {
             const positionClass = index === 0 ? 'top1' : index === 1 ? 'top2' : index === 2 ? 'top3' : '';
             const positionText = index === 0 ? '👑 #1' : index === 1 ? '🥈 #2' : index === 2 ? '🥉 #3' : `#${index + 1}`;
             const avatarSVG = generateAvatarSVG(donor.avatar);
