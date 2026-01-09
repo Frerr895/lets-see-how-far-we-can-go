@@ -1370,34 +1370,45 @@
         console.log('🔥 Firebase initialized successfully!');
         
         // Estado de verificación de email
-        let emailVerified = false;
         let verificationEmailSent = false;
         
         // Listener de cambios de autenticación
         auth.onAuthStateChanged(async (user) => {
             if (user) {
-                console.log('👤 User authenticated:', user.email);
-                emailVerified = user.emailVerified;
+                console.log('👤 User authenticated:', user.email, 'Verified:', user.emailVerified);
                 
-                // Si el email está verificado, actualizar userData
-                if (emailVerified && userData.email === user.email) {
+                // SOLO marcar como verificado si Firebase dice que lo está
+                if (user.emailVerified && userData.email === user.email && !userData.emailVerified) {
+                    console.log('✅ Email verification detected!');
                     userData.emailVerified = true;
                     localStorage.setItem('userData', JSON.stringify(userData));
                     
-                    // Actualizar en Firebase
-                    if (userData.email) {
-                        await usersRef.doc(userData.email).update({
+                    // Actualizar TODAS las donaciones del usuario en Firebase
+                    try {
+                        const snapshot = await donationsRef.where('email', '==', user.email).get();
+                        const batch = db.batch();
+                        
+                        snapshot.docs.forEach(doc => {
+                            batch.update(doc.ref, { emailVerified: true });
+                        });
+                        
+                        await batch.commit();
+                        
+                        // Actualizar usuario
+                        await usersRef.doc(user.email).update({
                             emailVerified: true,
                             verifiedAt: new Date().toISOString()
                         });
+                        
+                        showMessage('✅ Email verified successfully!');
+                        
+                        // Recargar UI para mostrar badge
+                        setTimeout(() => {
+                            loadData();
+                        }, 1000);
+                    } catch (error) {
+                        console.error('Error updating verification:', error);
                     }
-                    
-                    showMessage('✅ Email verified successfully!');
-                    
-                    // Recargar UI
-                    setTimeout(() => {
-                        loadData();
-                    }, 1000);
                 }
             }
         });
@@ -2499,52 +2510,49 @@
             if (!email || verificationEmailSent) return;
             
             try {
-                // Crear o hacer login con el email
                 const actionCodeSettings = {
-                    url: window.location.href, // URL de retorno después de verificar
+                    url: window.location.href,
                     handleCodeInApp: false
                 };
                 
-                // Intentar crear usuario o hacer login
-                let userCredential;
+                // Intentar crear usuario con contraseña temporal
+                const tempPassword = 'TempPass!' + Math.random().toString(36).slice(2) + Date.now();
+                
                 try {
-                    // Intentar crear nuevo usuario con contraseña temporal
-                    const tempPassword = 'temp' + Math.random().toString(36).slice(2) + 'Pass!';
-                    userCredential = await auth.createUserWithEmailAndPassword(email, tempPassword);
+                    const userCredential = await auth.createUserWithEmailAndPassword(email, tempPassword);
                     console.log('✅ User account created');
+                    
+                    // Actualizar displayName
+                    if (displayName) {
+                        await userCredential.user.updateProfile({ displayName: displayName });
+                    }
+                    
+                    // Enviar email de verificación
+                    await userCredential.user.sendEmailVerification(actionCodeSettings);
+                    verificationEmailSent = true;
+                    
+                    // IMPORTANTE: Cerrar sesión inmediatamente para que no se marque como verificado
+                    await auth.signOut();
+                    
+                    showMessage(`📧 Verification email sent to ${email}. Check your inbox!`);
+                    console.log('📧 Verification email sent, user signed out');
+                    
                 } catch (error) {
                     if (error.code === 'auth/email-already-in-use') {
-                        // El usuario ya existe, hacer sign-in con link
-                        console.log('📧 User exists, sending verification link');
+                        // Usuario ya existe, intentar enviar link de sign-in
+                        console.log('📧 User exists, sending sign-in link');
+                        await auth.sendSignInLinkToEmail(email, actionCodeSettings);
+                        window.localStorage.setItem('emailForSignIn', email);
+                        verificationEmailSent = true;
+                        showMessage(`📧 Verification link sent to ${email}!`);
                     } else {
                         throw error;
                     }
                 }
                 
-                // Enviar email de verificación
-                if (auth.currentUser) {
-                    await auth.currentUser.sendEmailVerification(actionCodeSettings);
-                    verificationEmailSent = true;
-                    
-                    showMessage(`📧 Verification email sent to ${email}. Check your inbox!`);
-                    
-                    // Actualizar displayName si se creó usuario
-                    if (displayName && auth.currentUser) {
-                        await auth.currentUser.updateProfile({ displayName: displayName });
-                    }
-                } else {
-                    // Si no hay usuario autenticado, enviar link de sign-in
-                    await auth.sendSignInLinkToEmail(email, actionCodeSettings);
-                    window.localStorage.setItem('emailForSignIn', email);
-                    verificationEmailSent = true;
-                    showMessage(`📧 Verification link sent to ${email}!`);
-                }
-                
             } catch (error) {
                 console.error('❌ Error sending verification email:', error);
-                if (error.code !== 'auth/email-already-in-use') {
-                    showMessage('⚠️ Could not send verification email. You can still donate!');
-                }
+                showMessage('⚠️ Could not send verification email. You can still donate!');
             }
         }
         
