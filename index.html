@@ -8,6 +8,7 @@
     <!-- Firebase SDK (Compat version for HTML) -->
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
     
     <style>
         * {
@@ -1357,12 +1358,46 @@
         // Initialize Firebase
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
+        const auth = firebase.auth();
         
         // Firestore collections
         const donationsRef = db.collection('donations');
         const usersRef = db.collection('users');
         
         console.log('🔥 Firebase initialized successfully!');
+        
+        // Estado de verificación de email
+        let emailVerified = false;
+        let verificationEmailSent = false;
+        
+        // Listener de cambios de autenticación
+        auth.onAuthStateChanged(async (user) => {
+            if (user) {
+                console.log('👤 User authenticated:', user.email);
+                emailVerified = user.emailVerified;
+                
+                // Si el email está verificado, actualizar userData
+                if (emailVerified && userData.email === user.email) {
+                    userData.emailVerified = true;
+                    localStorage.setItem('userData', JSON.stringify(userData));
+                    
+                    // Actualizar en Firebase
+                    if (userData.email) {
+                        await usersRef.doc(userData.email).update({
+                            emailVerified: true,
+                            verifiedAt: new Date().toISOString()
+                        });
+                    }
+                    
+                    showMessage('✅ Email verified successfully!');
+                    
+                    // Recargar UI
+                    setTimeout(() => {
+                        loadData();
+                    }, 1000);
+                }
+            }
+        });
         // ================================================================
 
         const GOAL = 1000000;
@@ -1688,6 +1723,7 @@
             totalDonated: 0,
             name: '',
             email: '',
+            emailVerified: false,
             avatar: {
                 style: 'circle',
                 bgColor: COLORS.backgrounds[0],
@@ -2233,6 +2269,7 @@
                     donorMap.set(key, {
                         name: donation.name || 'Anonymous Donor',
                         email: donation.email,
+                        emailVerified: donation.emailVerified || false,
                         avatar: donation.avatar,
                         donations: 0,
                         totalAmount: 0,
@@ -2250,6 +2287,10 @@
                 // Actualizar showInRanking (usar el más reciente)
                 if (donation.showInRanking !== undefined) {
                     donor.showInRanking = donation.showInRanking;
+                }
+                // Actualizar emailVerified si está verificado
+                if (donation.emailVerified) {
+                    donor.emailVerified = true;
                 }
             });
             
@@ -2308,7 +2349,10 @@
                     <div class="ranking-position ${positionClass}">${positionText}</div>
                     <div class="ranking-avatar">${avatarSVG}</div>
                     <div class="ranking-info">
-                        <div class="ranking-name">${donor.name}${isUserHighlight ? ' (You)' : ''}</div>
+                        <div class="ranking-name">
+                            ${donor.name}${isUserHighlight ? ' (You)' : ''}
+                            ${donor.emailVerified ? '<span style="color: #10b981; font-size: 0.85em; margin-left: 5px;" title="Verified email">✓</span>' : ''}
+                        </div>
                         <div class="ranking-stats">${donor.donations} donations</div>
                         ${displayAchievements.length > 0 ? `
                             <div class="ranking-achievements">
@@ -2424,6 +2468,7 @@
             const donationData = {
                 name,
                 email,
+                emailVerified: userData.emailVerified || false,
                 avatar: {...selectedAvatar},
                 date: new Date().toISOString(),
                 showInRanking,
@@ -2458,6 +2503,11 @@
                 })
                 .then(() => {
                     console.log('✅ User data updated in Firebase');
+                    
+                    // Enviar email de verificación si es primera donación con email
+                    if (email && !userData.emailVerified && userData.donations === 1) {
+                        sendVerificationEmail(email, name);
+                    }
                 })
                 .catch((error) => {
                     console.error('❌ Error saving to Firebase:', error);
@@ -2479,6 +2529,89 @@
                 setTimeout(() => {
                     showAchievementNotification(newAchievements);
                 }, 500);
+            }
+        }
+
+        // Enviar email de verificación
+        async function sendVerificationEmail(email, displayName) {
+            if (!email || verificationEmailSent) return;
+            
+            try {
+                // Crear o hacer login con el email
+                const actionCodeSettings = {
+                    url: window.location.href, // URL de retorno después de verificar
+                    handleCodeInApp: false
+                };
+                
+                // Intentar crear usuario o hacer login
+                let userCredential;
+                try {
+                    // Intentar crear nuevo usuario con contraseña temporal
+                    const tempPassword = 'temp' + Math.random().toString(36).slice(2) + 'Pass!';
+                    userCredential = await auth.createUserWithEmailAndPassword(email, tempPassword);
+                    console.log('✅ User account created');
+                } catch (error) {
+                    if (error.code === 'auth/email-already-in-use') {
+                        // El usuario ya existe, hacer sign-in con link
+                        console.log('📧 User exists, sending verification link');
+                    } else {
+                        throw error;
+                    }
+                }
+                
+                // Enviar email de verificación
+                if (auth.currentUser) {
+                    await auth.currentUser.sendEmailVerification(actionCodeSettings);
+                    verificationEmailSent = true;
+                    
+                    showMessage(`📧 Verification email sent to ${email}. Check your inbox!`);
+                    
+                    // Actualizar displayName si se creó usuario
+                    if (displayName && auth.currentUser) {
+                        await auth.currentUser.updateProfile({ displayName: displayName });
+                    }
+                } else {
+                    // Si no hay usuario autenticado, enviar link de sign-in
+                    await auth.sendSignInLinkToEmail(email, actionCodeSettings);
+                    window.localStorage.setItem('emailForSignIn', email);
+                    verificationEmailSent = true;
+                    showMessage(`📧 Verification link sent to ${email}!`);
+                }
+                
+            } catch (error) {
+                console.error('❌ Error sending verification email:', error);
+                if (error.code !== 'auth/email-already-in-use') {
+                    showMessage('⚠️ Could not send verification email. You can still donate!');
+                }
+            }
+        }
+        
+        // Verificar si el usuario viene de un link de verificación
+        if (auth.isSignInWithEmailLink(window.location.href)) {
+            let email = window.localStorage.getItem('emailForSignIn');
+            if (!email) {
+                email = window.prompt('Please provide your email for confirmation');
+            }
+            
+            if (email) {
+                auth.signInWithEmailLink(email, window.location.href)
+                    .then((result) => {
+                        window.localStorage.removeItem('emailForSignIn');
+                        showMessage('✅ Email verified successfully!');
+                        
+                        // Actualizar userData
+                        if (userData.email === email) {
+                            userData.emailVerified = true;
+                            localStorage.setItem('userData', JSON.stringify(userData));
+                        }
+                        
+                        // Limpiar URL
+                        window.history.replaceState({}, document.title, window.location.pathname);
+                    })
+                    .catch((error) => {
+                        console.error('Error verifying email:', error);
+                        showMessage('⚠️ Error verifying email. Please try again.');
+                    });
             }
         }
 
